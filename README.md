@@ -12,9 +12,9 @@ Purely cosmetic and strictly local — only what *your* client renders changes. 
 
 ## How it works
 
-Every hero visual in a match loads through `Entity.LoadCard(cardId)`. This plugin installs a [Harmony](https://github.com/BepInEx/HarmonyX) prefix that rewrites the cardId to the class's default hero before the load, using the game's **own classifiers** for tier detection: `RewardUtils.IsShopPremiumHeroSkin` marks the custom-frame tiers (Diamond/Legendary/Mythic), the `MYTHIC` tag distinguishes Mythic, and premium quality marks Diamond. Pixel skins are matched by name plus a configurable cardId/dbfId list.
+Every hero visual in a match loads through `Entity.LoadCard(cardId)`. This plugin installs a [Harmony](https://github.com/BepInEx/HarmonyX) prefix that rewrites the cardId to the class's default hero before the load, using the game's **own classifiers** for tier detection: a board theme (`CORNER_REPLACEMENT_TYPE`) distinguishes Mythic, and premium quality or the `HERO_FRAME_TYPE` marker (`RewardUtils.IsShopPremiumHeroSkin`) marks Diamond. That marker is set on only one Legendary skin (Mecha'thun), so Legendary is detected from the skin's CardDef instead: a legendary 3D model or custom frame prefab means Legendary. Pixel skins are matched by name plus a configurable cardId/dbfId list.
 
-A safety gate keeps gameplay intact: only cardIds present in the game's cosmetic-skin database (`CardHero`) are ever treated as skins, so gameplay hero cards — Reno, Lord Jaraxxus, adventure bosses — are never touched. On revert, skin behavior tags (emotes, attack animation, corner decorations, diamond markers) are re-synced with the default hero, and a small companion patch cleans up custom hero frames the game would otherwise leave mounted. Skin transform variants arrive as a second `LoadCard` with their own cardId and are reverted identically, with the transform showcase tags zeroed so the change renders as visual-less.
+A safety gate keeps gameplay intact: only cardIds present in the game's cosmetic-skin database (`CardHero`) are ever treated as skins, so gameplay hero cards — Reno, Lord Jaraxxus, adventure bosses — are never replaced. The one thing done to a played hero card is cosmetic: a **Signature** copy (e.g. Signature Deathwing) has its `PREMIUM` tag dropped to normal before load, so it renders as the plain version of the same hero card. On revert, skin behavior tags (emotes, attack animation, corner decorations, diamond markers) are re-synced with the default hero, and a small companion patch cleans up custom hero frames the game would otherwise leave mounted. Skin transform variants arrive as a second `LoadCard` with their own cardId and are reverted identically, with the transform showcase tags zeroed so the change renders as visual-less.
 
 ## Installation
 
@@ -56,7 +56,7 @@ RevertMythic = true
 ## Revert Diamond-tier skins (diamond 3D portraits).
 RevertDiamond = true
 
-## Revert Legendary-tier skins (animated portraits).
+## Revert Legendary-tier skins (animated 3D portraits).
 RevertLegendary = true
 
 ## Revert Pixel skins (card name containing 'Pixel', plus PixelSkinCardIds).
@@ -67,6 +67,11 @@ RevertHonored = false
 
 ## Revert EVERY non-default skin, ignoring the filters above.
 RevertAllSkins = false
+
+## Show hero cards played from hand (e.g. Deathwing) that carry Signature quality
+## as the normal version of the same hero card. The hero itself is never replaced;
+## only the Signature art and frame are dropped. Golden hero cards are left alone.
+RevertSignatureHeroCards = true
 
 ## Comma-separated cardIds (HERO_02ba) or dbfIds (116081) always treated as Pixel skins.
 ## Defaults: Northrend Arthas, Eternal Malfurion, Hearthglen Jaina, Orgrimmar Thrall.
