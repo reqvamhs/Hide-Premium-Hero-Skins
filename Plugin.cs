@@ -69,44 +69,19 @@ namespace HsHidePremiumSkins
     }
 
     /// <summary>
-    /// Reverts hero skins to the default class hero at Entity.LoadCard time by rewriting
-    /// the cardId before load. Tier detection: Mythic via CORNER_REPLACEMENT_TYPE,
-    /// Diamond via premium quality or the HERO_FRAME_TYPE marker that
-    /// RewardUtils.IsShopPremiumHeroSkin reads, Legendary via the CardDef's legendary 3D
-    /// model or custom frame (see HasLegendaryCardDef - the marker is absent on all but
-    /// one Legendary skin); Pixel skins via a configurable cardId/dbfId list. Only
-    /// cardIds present in the CardHero DBF are treated as skins, so gameplay hero cards
-    /// (Reno, Jaraxxus, bosses) are
-    /// never touched; Honored (1000-win) portraits are classified by HeroType and kept
-    /// unless enabled. Skin transform variants arrive as a second LoadCard with their
-    /// own cardId and are reverted the same way; the transform ceremony sub-spell is
-    /// suppressed separately (see TransformSubSpellPatch). Gameplay hero cards played
-    /// from hand keep their identity, but a Signature copy is shown as the normal card
-    /// (RevertSignatureHeroCards). Hero powers are deliberately left alone.
-    ///
-    /// The hero tray is also deliberately left alone - see the note on
-    /// Board.ApplyHeroTrayFromCard below. Do not patch it. Actor.LoadCustomFrame
-    /// needs no patch either, for the reasons in the second remarks block.
+    /// Reverts opponent hero skins to the default class hero by rewriting the cardId in an
+    /// Entity.LoadCard prefix. Tier detection uses the game's own classifiers: Mythic via
+    /// CORNER_REPLACEMENT_TYPE, Diamond via premium quality or HERO_FRAME_TYPE, Legendary
+    /// via the CardDef's legendary 3D model or custom frame, Pixel via a configurable id
+    /// list. Only cardIds present in the CardHero DBF are treated as skins, so gameplay
+    /// hero cards (Reno, Jaraxxus, bosses) are never touched, and Honored portraits are
+    /// kept unless opted in. Hero powers are left alone.
     /// </summary>
     /// <remarks>
-    /// Do NOT patch Actor.LoadCustomFrame to unload a stale custom hero frame after a
-    /// revert. The game already does it: the method's final branch, taken when cardDef
-    /// is null or m_CustomHeroFramePrefab is empty - exactly the frameless vanilla def
-    /// a reverted hero loads - calls UnloadCustomFrame() unconditionally. There is no
-    /// early return to work around, and a prefix that unloads it again only makes the
-    /// unload happen twice.
-    /// </remarks>
-    /// <remarks>
-    /// Do NOT skip or cancel Board.ApplyHeroTrayFromCard for reverted/vanilla heroes.
-    /// Board.ShowFriendlyHeroTray / ShowOpponentHeroTray destroy the board's built-in
-    /// tray object and swap in a freshly instantiated prefab (the golden tray, or the
-    /// card's HeroFrameEnemyPath frame) whose renderer has no main texture yet. The one
-    /// and only writer of that texture is Board.OnHeroTrayTextureLoaded, reachable
-    /// solely through ApplyHeroTrayFromCard, so cancelling it leaves an untextured mesh
-    /// that renders as a black arc above the hero. ApplyHeroTrayFromCard already guards
-    /// itself with String.IsNullOrEmpty(card.CustomHeroTray) and is a harmless no-op for
-    /// cards without tray art; on a reverted hero it simply applies the vanilla hero's
-    /// own tray, which is the desired result.
+    /// Deliberately unpatched: Actor.LoadCustomFrame already unloads a stale custom frame
+    /// on the frameless vanilla def a reverted hero loads, and Board.ApplyHeroTrayFromCard
+    /// is the only path that ever textures the hero tray - cancelling it leaves an
+    /// untextured mesh that renders as a black arc above the hero.
     /// </remarks>
     public static class SkinPatches
     {
@@ -144,25 +119,13 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// Legendary-tier detection. The DBF does not mark the tier: HERO_FRAME_TYPE, the
-        /// marker RewardUtils.IsShopPremiumHeroSkin keys on, is a Diamond (1) / Mythic (2)
-        /// marker - a September 2026 cross-check of the wiki's tier lists against the
-        /// hsdata tag dump found it on every Diamond and Mythic skin and on exactly one of
-        /// the twelve Legendary skins (Mecha'thun, value 3). The other eleven (C'Thun,
-        /// Night Warrior Tyrande, Justice Jaina, Corrupted Leeroy, Leeroy the Legend,
-        /// MC Blingtron, Rafaam, Arthas Menethil, both Sylvanas, Varian Wrynn) carry no
-        /// tier tag at all, and nothing else in their card record tells them apart: their
-        /// RARITY is FREE, like every other skin, so a rarity check cannot work. What
-        /// actually defines the tier at runtime lives on the CardDef asset:
-        /// m_LegendaryModel is the 3D model that Actor.UpdateLegendaryCardArt renders to
-        /// texture for the portrait, and m_CustomHeroFramePrefab is the large frame
-        /// Actor.LoadCustomFrame mounts. Vanilla, Honored and ordinary 2D shop skins have
-        /// neither.
-        ///
-        /// DefLoader.GetCardDef instantiates the shared card prefab synchronously, so this
-        /// is only asked as a last resort, after the tag-based checks have all failed; the
-        /// handle is disposed immediately since the skin's def is never loaded (the vanilla
-        /// hero's is).
+        /// Legendary-tier detection. HERO_FRAME_TYPE marks Diamond and Mythic, not Legendary:
+        /// it is set on exactly one Legendary skin (Mecha'thun), and every skin has RARITY
+        /// FREE, so no tag distinguishes the tier. The CardDef asset does - Legendary skins
+        /// carry a legendary 3D model or a custom hero frame prefab, while vanilla, Honored
+        /// and ordinary 2D skins carry neither. GetCardDef instantiates the shared prefab
+        /// synchronously, so this is asked only as a last resort after the tag checks fail,
+        /// and the handle is disposed immediately.
         /// </summary>
         internal static bool HasLegendaryCardDef(string cardId)
         {
@@ -209,31 +172,18 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// Skin transform ceremonies (Genn Greymane's low-health worgen change, and the
-        /// equivalent on other transforming skins) are played as server-instructed
-        /// sub-spells: the task list carries a HistSubSpellStart whose SpellPrefabGUID is
-        /// prefixed with the skin's own cardId and an underscore, e.g.
-        /// "HERO_01az_GennGreymane_transformation_LowHealth:7ae43af7...", issued in the
-        /// trigger block immediately before the transform CHANGE_ENTITY. Matching that
-        /// prefix against the skins reverted this game is the suppression condition; the
-        /// trailing underscore keeps a shorter cardId from matching a longer one.
-        ///
-        /// Returning no sub-spell instance is a path the game already takes on its own,
-        /// not a forced error. SubSpellController.AddPowerSourceAndTargets is the only
-        /// caller and bails on a null instance BEFORE reaching CheckForSubSpellEnd, so the
-        /// m_subSpellInstanceStack push/pop pair stays balanced - the cancelled method
-        /// never pushed, and nothing later pops. The false return then propagates through
-        /// SpellController.AttachPowerTaskList to
-        /// PowerProcessor.DoSubSpellTaskListWithController, which returns without calling
-        /// DoPowerTaskList, so the task list runs on the normal no-spell path: the
-        /// transform itself still happens and only the ceremony is skipped.
+        /// Skin transform ceremonies (e.g. Genn Greymane's low-health change) arrive as
+        /// server-instructed sub-spells whose SpellPrefabGUID is prefixed with the skin's own
+        /// cardId and an underscore; matching that prefix against the skins reverted this game
+        /// is the suppression condition. Returning no sub-spell instance is a path the game
+        /// already takes on its own: AddPowerSourceAndTargets bails on a null instance before
+        /// anything is pushed onto the instance stack, so the transform itself still happens
+        /// and only the ceremony is skipped.
         /// </summary>
         /// <remarks>
-        /// Do not try to match on the transform's target cardId instead of the prefab
-        /// GUID. A transform target gets its own cardId that does not share the source
-        /// skin's prefix (HERO_01az -> HERO_01ba), and it is not added to RevertedCardIds
-        /// until its own LoadCard, which happens after this sub-spell is evaluated. A
-        /// target-based check cannot fire; the GUID prefix is the only usable signal.
+        /// Do not match on the transform's target cardId instead. The target gets its own
+        /// cardId that does not share the source skin's prefix, and it is not known until its
+        /// own LoadCard, which runs after this sub-spell is evaluated.
         /// </remarks>
         [HarmonyPatch(typeof(SubSpellController), "GetSubSpellInstanceForTasklist")]
         public static class TransformSubSpellPatch
@@ -250,9 +200,8 @@ namespace HsHidePremiumSkins
                     // Gameplay only, matching the other patches.
                     if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
                         return true;
-                    // Own the set's lifetime here too, so a stale cardId from the previous
-                    // game cannot survive into this one on the strength of LoadCardPatch
-                    // happening to run first.
+                    // Own the set's lifetime here too, so a stale cardId from the last game cannot
+                    // survive into this one if LoadCardPatch happens to run first.
                     TrackGame();
                     if (RevertedCardIds.Count == 0)
                         return true;
@@ -284,25 +233,15 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// A Mythic skin's board theme is applied by CornerSpellReplacementManager, driven
-        /// by CORNER_REPLACEMENT_TYPE on the PLAYER entity (not the hero), so it survives a
-        /// hero revert - which is wanted, the corner decorations are part of the board and
-        /// stay. UpdateCornerReplacements fans out to four calls per side:
-        /// UpdateCornerReplacement (the corner props), UpdateTableTop, UpdateFrame and
-        /// UpdatePlayArea. Only UpdateFrame is a problem.
-        ///
-        /// UpdateFrame swaps Board's per-side frame texture for the one on that theme's
-        /// CornerReplacementSpellTableEntry.m_FrameTexture. That frame is the arc directly
-        /// above the hero portrait. With the skin equipped its large custom hero frame sits
-        /// in front of it; once the hero is reverted to the small vanilla portrait the frame
-        /// is left exposed, and for some themes - Maiev (14) - it renders black.
-        /// DEATHWING (9) and RAGNAROS (1) do not, which is why only some skins showed it.
-        ///
-        /// Skipping the call for the reverted side leaves the board's own frame texture in
-        /// place - the default - while the corner props, tabletop and play area still get
-        /// the theme. There is no restore path to use instead: UpdateCornerSpellReplacements
-        /// gates its whole body on cornerReplacementSpellType != 0, so it only ever applies a
-        /// theme and never reverts one.
+        /// A Mythic skin's board theme is driven by CORNER_REPLACEMENT_TYPE on the PLAYER
+        /// entity, so it survives a hero revert - which is wanted, the corner decorations are
+        /// part of the board. Of the four calls UpdateCornerReplacements fans out to per side,
+        /// only UpdateFrame is a problem: it swaps the arc above the hero portrait for the
+        /// theme's frame texture, which some themes (Maiev) render black once the skin's large
+        /// custom hero frame is gone. Skipping it leaves the board's default frame in place
+        /// while the corner props, tabletop and play area still get the theme. There is no
+        /// restore path to use instead - UpdateCornerSpellReplacements only ever applies a
+        /// theme, never reverts one.
         /// </summary>
         [HarmonyPatch(typeof(CornerSpellReplacementManager), "UpdateFrame")]
         public static class BoardFramePatch
@@ -316,15 +255,11 @@ namespace HsHidePremiumSkins
                         return true;
                     if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
                         return true;
-                    // Deliberately NOT gated on RevertedCardIds: UpdateFrame runs during
-                    // board setup, before any hero LoadCard, so the set is always empty here.
-                    //
-                    // Skipping unconditionally for the opposing side is safe in practice
-                    // because a board theme only ever accompanies a Mythic-tier skin:
-                    // CORNER_REPLACEMENT_TYPE is only set on heroes that also carry
-                    // HERO_FRAME_TYPE=2, and those are reverted by default. If
-                    // RevertMythic is turned off the opponent keeps their portrait and loses
-                    // only the frame texture, which is a cosmetic mismatch rather than a bug.
+                    // Not gated on RevertedCardIds: UpdateFrame runs during board setup, before any
+                    // hero LoadCard, so the set is always empty here. Skipping unconditionally for the
+                    // opposing side is safe because a board theme only ever accompanies a Mythic skin,
+                    // which is reverted by default; with RevertMythic off the opponent loses only the
+                    // frame texture, a cosmetic mismatch rather than a bug.
                     if (side != Player.Side.OPPOSING)
                         return true;
                     Log?.LogInfo($"Keeping default board frame for reverted opponent (theme={spellType})");
@@ -379,17 +314,11 @@ namespace HsHidePremiumSkins
                         GameDbf.CardHero.GetRecords().FirstOrDefault(r => r.CardId == dbId);
                     if (heroRec == null)
                     {
-                        // Gameplay hero cards played from hand (Deathwing, Reno, ...) are not
-                        // skins and keep their identity, but a Signature copy is still a shop
-                        // cosmetic: drop it to the normal version of the same hero card.
-                        // Every consumer - actor prefab (ActorNames.GetZoneActor), portrait
-                        // material (Actor.UpdatePortraitMaterials), summon spell - reads the
-                        // premium through Entity.GetPremiumType(), i.e. the PREMIUM tag, so
-                        // rewriting it here, before the CardDef load, is sufficient. The
-                        // real-time copy is synced too so ShouldUpdateActorOnChangeEntity
-                        // does not see a phantom premium change on later CHANGE_ENTITYs.
-                        // This also catches the hand card's SHOW_ENTITY on play, so the
-                        // play animation shows the normal card, as if a normal copy was played.
+                        // Gameplay hero cards played from hand are not skins and keep their identity,
+                        // but a Signature copy is still a shop cosmetic: drop it to the normal version
+                        // of the same card. Every consumer reads the premium through GetPremiumType(),
+                        // so rewriting the tag before the CardDef load is sufficient. The real-time
+                        // copy is synced too, so later CHANGE_ENTITYs see no phantom premium change.
                         if (On(RevertSignatureHeroCards) &&
                             (TAG_PREMIUM)__instance.GetTag(GAME_TAG.PREMIUM) == TAG_PREMIUM.SIGNATURE)
                         {
@@ -475,15 +404,10 @@ namespace HsHidePremiumSkins
                         vanillaDef.GetTag(GAME_TAG.EMOTECHARACTER));
                     __instance.SetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE,
                         vanillaDef.GetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE));
-                    // HERO_FRAME_TYPE is the custom-frame tier marker (Mythic reads 2). The
-                    // only reader in the whole assembly is RewardUtils.IsShopPremiumHeroSkin,
-                    // a shop/tier classifier; nothing in rendering consults it. In
-                    // particular it does NOT size hero spell overlays: Divine Shield, Freeze
-                    // and the rest come from the hero actor's shared spell table at unit
-                    // scale, identical for every skin (the 1.0.1 note claiming otherwise
-                    // was wrong). Synced anyway so any tier query against the live entity
-                    // sees the vanilla hero. Safe to write here because tier detection
-                    // above already read IsShopPremiumHeroSkin from the skin's own EntityDef.
+                    // HERO_FRAME_TYPE is a shop/tier marker whose only reader is
+                    // RewardUtils.IsShopPremiumHeroSkin; nothing in rendering consults it. Synced
+                    // anyway so any tier query against the live entity sees the vanilla hero. Safe
+                    // to write here because detection above already read it from the skin's EntityDef.
                     __instance.SetTag(GAME_TAG.HERO_FRAME_TYPE,
                         vanillaDef.GetTag(GAME_TAG.HERO_FRAME_TYPE));
                     // Skins can override individual emotes; sync the whole block.
@@ -492,20 +416,11 @@ namespace HsHidePremiumSkins
                     // Diamond-quality marker feeds actor variant selection and tooltips.
                     __instance.SetTag(GAME_TAG.HAS_DIAMOND_QUALITY,
                         vanillaDef.GetTag(GAME_TAG.HAS_DIAMOND_QUALITY));
-                    // Premium resolution is deliberately left to the game. EntityBase
-                    // .GetPremiumType() treats the raw PREMIUM tag as an entitlement
-                    // ceiling and walks it down to what the card can actually render:
-                    //
-                    //     p = GetTag(PREMIUM);
-                    //     if (p == DIAMOND   && !HasTag(HAS_DIAMOND_QUALITY))   p = SIGNATURE;
-                    //     if (p == SIGNATURE && !HasTag(HAS_SIGNATURE_QUALITY)) p = GOLDEN;
-                    //
-                    // Card.GetPremium() forwards to it, so every consumer - including
-                    // Board.GoldenHeroes - sees the downgraded value. Syncing the two
-                    // quality tags to the vanilla hero (both 0) is therefore enough:
-                    // a Diamond or Signature skin resolves to GOLDEN on the default
-                    // portrait by itself, and NORMAL/GOLDEN pass through untouched.
-                    // Writing PREMIUM here would destroy the ceiling the cascade reads.
+                    // Premium resolution is left to the game: GetPremiumType() treats the PREMIUM tag
+                    // as an entitlement ceiling and walks it down to what the card can actually render
+                    // (DIAMOND -> SIGNATURE -> GOLDEN, each step gated on the matching quality tag).
+                    // Syncing the two quality tags to the vanilla hero is therefore enough; writing
+                    // PREMIUM here would destroy the ceiling the cascade reads.
                     __instance.SetTag(GAME_TAG.HAS_SIGNATURE_QUALITY,
                         vanillaDef.GetTag(GAME_TAG.HAS_SIGNATURE_QUALITY));
 
