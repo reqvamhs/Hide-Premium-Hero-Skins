@@ -12,7 +12,7 @@ Purely cosmetic and strictly local — only what *your* client renders changes. 
 
 ## How it works
 
-Every hero visual in a match loads through `Entity.LoadCard(cardId)`. This plugin installs a [Harmony](https://github.com/BepInEx/HarmonyX) prefix that rewrites the cardId to the class's default hero before the load, using the game's **own classifiers** for tier detection: a board theme (`CORNER_REPLACEMENT_TYPE`) distinguishes Mythic, and premium quality or the `HERO_FRAME_TYPE` marker (`RewardUtils.IsShopPremiumHeroSkin`) marks Diamond. That marker is set on only one Legendary skin (Mecha'thun), so Legendary is detected from the skin's CardDef instead: a legendary 3D model or custom frame prefab means Legendary. Pixel skins are matched by name plus a configurable cardId/dbfId list.
+Every hero visual in a match loads through `Entity.LoadCard(cardId)`. This plugin installs a [Harmony](https://github.com/BepInEx/HarmonyX) prefix that rewrites the cardId to the class's default hero before the load, using the game's **own classifiers** for tier detection: a board theme (`CORNER_REPLACEMENT_TYPE`) distinguishes Mythic, and premium quality or the `HERO_FRAME_TYPE` marker (`RewardUtils.IsShopPremiumHeroSkin`) marks Diamond. That marker sits on every Diamond skin and on only one Legendary skin (Mecha'thun), so Legendary is detected from the skin's CardDef instead: a legendary 3D model or custom frame prefab means Legendary. Diamond and Legendary share a single filter, because nothing in a match distinguishes them: both ship a 3D model and a custom frame, and the one tag that separates them only drives menu scaling. Legendary buys more unique animations, not a different kind of skin. Pixel skins are matched by name plus a configurable cardId/dbfId list.
 
 A safety gate keeps gameplay intact: only cardIds present in the game's cosmetic-skin database (`CardHero`) are ever treated as skins, so gameplay hero cards — Reno, Lord Jaraxxus, adventure bosses — are never replaced. The one thing done to a played hero card is cosmetic: a **Signature** copy (e.g. Signature Deathwing) has its `PREMIUM` tag dropped to normal before load, so it renders as the plain version of the same hero card. On revert, skin behavior tags (emotes, attack animation, corner decorations, diamond markers) are re-synced with the default hero, and a small companion patch cleans up custom hero frames the game would otherwise leave mounted. Skin transform variants arrive as a second `LoadCard` with their own cardId and are reverted identically, with the transform showcase tags zeroed so the change renders as visual-less.
 
@@ -53,10 +53,12 @@ AlsoHideOwnSkin = false
 ## Revert Mythic-tier skins (fully animated 3D portraits).
 RevertMythic = true
 
-## Revert Diamond-tier skins (diamond 3D portraits).
-RevertDiamond = true
+## Revert skins with an animated 3D portrait (the Diamond and Legendary tiers).
+Revert3DPortraits = true
 
-## Revert Legendary-tier skins (animated 3D portraits).
+## Superseded by Revert3DPortraits, kept so existing configs keep working.
+## Setting either to false still turns 3D portraits off.
+RevertDiamond = true
 RevertLegendary = true
 
 ## Revert Pixel skins (card name containing 'Pixel', plus PixelSkinCardIds).

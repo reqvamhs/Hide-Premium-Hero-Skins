@@ -12,7 +12,7 @@ namespace HsHidePremiumSkins
     {
         public const string PluginGuid = "com.reqvam.hshidepremiumskins";
         public const string PluginName = "Hide Premium Hero Skins";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.2.0";
 
         private void Awake()
         {
@@ -36,12 +36,17 @@ namespace HsHidePremiumSkins
                 "Also revert your own hero skin.");
             SkinPatches.RevertMythic = fsConfig.Bind("Filters", "RevertMythic", true,
                 "Revert Mythic-tier skins (fully animated 3D portraits).");
+            SkinPatches.Revert3DPortraits = fsConfig.Bind("Filters", "Revert3DPortraits", true,
+                "Revert skins with an animated 3D portrait: the Diamond and Legendary shop tiers. " +
+                "They share one filter because nothing in a match distinguishes them - both ship a " +
+                "legendary 3D model and a custom frame, and the only tag that separates them drives " +
+                "menu scaling. Legendary buys more unique animations, not a different kind of skin.");
             SkinPatches.RevertDiamond = fsConfig.Bind("Filters", "RevertDiamond", true,
-                "Revert Diamond-tier skins (diamond 3D portraits).");
+                "Superseded by Revert3DPortraits; kept so existing configs keep working. " +
+                "Setting it to false still turns 3D portraits off.");
             SkinPatches.RevertLegendary = fsConfig.Bind("Filters", "RevertLegendary", true,
-                "Revert Legendary-tier skins (animated 3D portraits). Detected by the skin's CardDef " +
-                "carrying a legendary 3D model or custom frame; the game's HERO_FRAME_TYPE marker only " +
-                "covers Diamond and Mythic and is set on a single Legendary skin (Mecha'thun).");
+                "Superseded by Revert3DPortraits; kept so existing configs keep working. " +
+                "Setting it to false still turns 3D portraits off.");
             SkinPatches.RevertPixel = fsConfig.Bind("Filters", "RevertPixel", true,
                 "Revert Pixel skins (card name containing 'Pixel', plus PixelSkinCardIds).");
             SkinPatches.RevertHonored = fsConfig.Bind("Filters", "RevertHonored", false,
@@ -89,6 +94,7 @@ namespace HsHidePremiumSkins
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> AlsoFriendly;
         internal static ConfigEntry<bool> RevertMythic;
+        internal static ConfigEntry<bool> Revert3DPortraits;
         internal static ConfigEntry<bool> RevertDiamond;
         internal static ConfigEntry<bool> RevertLegendary;
         internal static ConfigEntry<bool> RevertPixel;
@@ -100,6 +106,15 @@ namespace HsHidePremiumSkins
 
 
         internal static bool On(ConfigEntry<bool> e) => e != null && e.Value;
+
+        /// <summary>
+        /// The merged Diamond + Legendary filter. The two legacy keys are folded in as
+        /// extra opt-outs, so any explicit false a user already wrote still silences the
+        /// tier. AND rather than OR: it can only ever revert less than the old config did,
+        /// never more, so nobody's opponent is suddenly stripped after an update.
+        /// </summary>
+        internal static bool Revert3D() =>
+            On(Revert3DPortraits) && On(RevertDiamond) && On(RevertLegendary);
 
         // Original cardIds of skins reverted in the current game; used to suppress
         // their server-instructed transform ceremony sub-spells (prefabs are named
@@ -363,29 +378,30 @@ namespace HsHidePremiumSkins
                         return;
                     }
 
-                    // IsShopPremiumHeroSkin is true only when HERO_FRAME_TYPE == 1, i.e.
-                    // Diamond; Mythic (2) and Mecha'thun (3) read false. It is NOT a
-                    // Legendary marker - see HasLegendaryCardDef.
-                    bool isPremiumTier = RewardUtils.IsShopPremiumHeroSkin(entityDef);
                     bool isMythic = GameUtils.IsMythicHero(entityDef);
-                    bool isDiamond =
-                        __instance.GetPremiumType() == TAG_PREMIUM.DIAMOND ||
-                        entityDef.HasTag(GAME_TAG.HAS_DIAMOND_QUALITY);
-                    // Legendary: the CardDef probe is the real detection, and runs only
-                    // when the cheap tag checks came up empty and the answer would matter.
-                    // NOTE: isPremiumTier means HERO_FRAME_TYPE == 1, which the patch
-                    // 36.6.0 card data carries on all 22 Diamond skins and nothing else.
-                    // None of them carry HAS_DIAMOND_QUALITY, so isDiamond above is always
-                    // false and every Diamond skin is actually caught HERE, gated on
-                    // RevertLegendary. RevertDiamond currently matches nothing.
-                    bool isLegendary = !isMythic && !isDiamond &&
-                        (isPremiumTier || (On(RevertLegendary) && HasLegendaryCardDef(cardId)));
+
+                    // Diamond, by two independent routes. IsShopPremiumHeroSkin is true
+                    // only for HERO_FRAME_TYPE == 1, which the patch 36.6.0 card data puts
+                    // on all 22 Diamond skins and on nothing else but four of their own
+                    // transform variants. The quality check below is belt and braces: no
+                    // shipped Diamond skin carries HAS_DIAMOND_QUALITY today, so it never
+                    // fires on its own, but it costs nothing and would catch a future skin
+                    // that does. Mythic is excluded first - it has its own filter and would
+                    // otherwise match here through its CardDef.
+                    bool isDiamond = !isMythic &&
+                        (RewardUtils.IsShopPremiumHeroSkin(entityDef) ||
+                         __instance.GetPremiumType() == TAG_PREMIUM.DIAMOND ||
+                         entityDef.HasTag(GAME_TAG.HAS_DIAMOND_QUALITY));
+                    // Legendary carries no tier tag at all (bar Mecha'thun), so the CardDef
+                    // probe is the only detection. It is asked last, and only when the
+                    // filter is on, because it instantiates the card prefab synchronously.
+                    bool is3DPortrait = isDiamond ||
+                        (!isMythic && Revert3D() && HasLegendaryCardDef(cardId));
 
                     bool wanted =
                         On(RevertAllSkins) ||
                         (On(RevertMythic) && isMythic) ||
-                        (On(RevertDiamond) && isDiamond) ||
-                        (On(RevertLegendary) && isLegendary) ||
+                        (Revert3D() && is3DPortrait) ||
                         (On(RevertPixel) && IsPixelSkin(entityDef, cardId, dbId)) ||
                         (On(RevertHonored) && isHonored);
                     if (!wanted)
