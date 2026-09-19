@@ -38,9 +38,7 @@ namespace HsHidePremiumSkins
                 "Revert Mythic-tier skins (fully animated 3D portraits).");
             SkinPatches.Revert3DPortraits = fsConfig.Bind("Filters", "Revert3DPortraits", true,
                 "Revert skins with an animated 3D portrait: the Diamond and Legendary shop tiers. " +
-                "They share one filter because nothing in a match distinguishes them - both ship a " +
-                "legendary 3D model and a custom frame, and the only tag that separates them drives " +
-                "menu scaling. Legendary buys more unique animations, not a different kind of skin.");
+                "One filter, because nothing in a match distinguishes them.");
             SkinPatches.RevertDiamond = fsConfig.Bind("Filters", "RevertDiamond", true,
                 "Superseded by Revert3DPortraits; kept so existing configs keep working. " +
                 "Setting it to false still turns 3D portraits off.");
@@ -75,18 +73,13 @@ namespace HsHidePremiumSkins
 
     /// <summary>
     /// Reverts opponent hero skins to the default class hero by rewriting the cardId in an
-    /// Entity.LoadCard prefix. Tier detection uses the game's own classifiers: Mythic via
-    /// CORNER_REPLACEMENT_TYPE, Diamond via premium quality or the HERO_FRAME_TYPE marker,
-    /// Legendary via the CardDef's legendary 3D model or custom frame, Pixel via a
-    /// configurable id list. Only cardIds present in the CardHero DBF are treated as skins, so gameplay
-    /// hero cards (Reno, Jaraxxus, bosses) are never touched, and Honored portraits are
-    /// kept unless opted in. Hero powers are left alone.
+    /// Entity.LoadCard prefix. Only cardIds in the CardHero DBF count as skins, so gameplay
+    /// heroes are never touched. Hero powers are left alone.
     /// </summary>
     /// <remarks>
-    /// Deliberately unpatched: Actor.LoadCustomFrame already unloads a stale custom frame
-    /// on the frameless vanilla def a reverted hero loads, and Board.ApplyHeroTrayFromCard
-    /// is the only path that ever textures the hero tray - cancelling it leaves an
-    /// untextured mesh that renders as a black arc above the hero.
+    /// Do not patch Actor.LoadCustomFrame (already unloads on the vanilla def) or
+    /// Board.ApplyHeroTrayFromCard (sole writer of the tray texture; skipping it leaves a
+    /// black arc above the hero).
     /// </remarks>
     public static class SkinPatches
     {
@@ -107,18 +100,13 @@ namespace HsHidePremiumSkins
 
         internal static bool On(ConfigEntry<bool> e) => e != null && e.Value;
 
-        /// <summary>
-        /// The merged Diamond + Legendary filter. The two legacy keys are folded in as
-        /// extra opt-outs, so any explicit false a user already wrote still silences the
-        /// tier. AND rather than OR: it can only ever revert less than the old config did,
-        /// never more, so nobody's opponent is suddenly stripped after an update.
-        /// </summary>
+        // Merged Diamond + Legendary filter. Legacy keys fold in as extra opt-outs; AND,
+        // so an update can only revert less than the old config did, never more.
         internal static bool Revert3D() =>
             On(Revert3DPortraits) && On(RevertDiamond) && On(RevertLegendary);
 
-        // Original cardIds of skins reverted in the current game; used to suppress
-        // their server-instructed transform ceremony sub-spells (prefabs are named
-        // after the skin cardId).
+        // Skins reverted this game, matched against transform sub-spell prefabs,
+        // which are named after the skin cardId.
         internal static readonly System.Collections.Generic.HashSet<string> RevertedCardIds =
             new System.Collections.Generic.HashSet<string>();
         private static object _lastGameState;
@@ -134,15 +122,10 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// Legendary-tier detection. HERO_FRAME_TYPE does not mark the tier: the game's own
-        /// reader, RewardUtils.IsShopPremiumHeroSkin, is true only for tag value 1 (Diamond),
-        /// and every skin has RARITY FREE, so no tag distinguishes Legendary. Nor does
-        /// CardHero.HeroType, whose only values are UNKNOWN, VANILLA, HONORED and the two
-        /// Battlegrounds kinds. The CardDef asset does - Legendary skins
-        /// carry a legendary 3D model or a custom hero frame prefab, while vanilla, Honored
-        /// and ordinary 2D skins carry neither. GetCardDef instantiates the shared prefab
-        /// synchronously, so this is asked only as a last resort after the tag checks fail,
-        /// and the handle is disposed immediately.
+        /// Legendary-tier detection. No tag marks the tier: HERO_FRAME_TYPE is Diamond-only,
+        /// rarity is FREE on every skin, and CardHero.HeroType has no tier values. The CardDef
+        /// does - Legendary and Diamond carry a 3D model or custom frame that plainer skins
+        /// lack. GetCardDef loads the prefab synchronously, so ask this last.
         /// </summary>
         internal static bool HasLegendaryCardDef(string cardId)
         {
@@ -189,18 +172,13 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// Skin transform ceremonies (e.g. Genn Greymane's low-health change) arrive as
-        /// server-instructed sub-spells whose SpellPrefabGUID is prefixed with the skin's own
-        /// cardId and an underscore; matching that prefix against the skins reverted this game
-        /// is the suppression condition. Returning no sub-spell instance is a path the game
-        /// already takes on its own: AddPowerSourceAndTargets bails on a null instance before
-        /// anything is pushed onto the instance stack, so the transform itself still happens
-        /// and only the ceremony is skipped.
+        /// Suppresses skin transform ceremonies, whose SpellPrefabGUID starts with the skin's
+        /// cardId. Returning no instance is a path the game already takes (AddPowerSourceAndTargets
+        /// bails before pushing the stack), so the transform still happens without the ceremony.
         /// </summary>
         /// <remarks>
-        /// Do not match on the transform's target cardId instead. The target gets its own
-        /// cardId that does not share the source skin's prefix, and it is not known until its
-        /// own LoadCard, which runs after this sub-spell is evaluated.
+        /// Do not match the transform's target cardId: it shares no prefix with the source and
+        /// is unknown until its own LoadCard, which runs later.
         /// </remarks>
         [HarmonyPatch(typeof(SubSpellController), "GetSubSpellInstanceForTasklist")]
         public static class TransformSubSpellPatch
@@ -208,8 +186,7 @@ namespace HsHidePremiumSkins
             [HarmonyPrefix]
             public static bool Prefix(object taskList)
             {
-                // On skip, Harmony leaves the return value at default (null),
-                // which is exactly the no-sub-spell result we want.
+                // On skip Harmony leaves the return at null - the no-sub-spell result we want.
                 try
                 {
                     if (!On(Enabled) || taskList == null)
@@ -217,8 +194,7 @@ namespace HsHidePremiumSkins
                     // Gameplay only, matching the other patches.
                     if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
                         return true;
-                    // Own the set's lifetime here too, so a stale cardId from the last game cannot
-                    // survive into this one if LoadCardPatch happens to run first.
+                    // Own the set's lifetime here too, in case this runs before LoadCardPatch.
                     TrackGame();
                     if (RevertedCardIds.Count == 0)
                         return true;
@@ -226,7 +202,6 @@ namespace HsHidePremiumSkins
                     object hist = Traverse.Create(taskList).Method("GetSubSpellStart").GetValue();
                     if (hist == null)
                         return true;
-                    // HistSubSpellStart.SpellPrefabGUID is a string.
                     string guid = Traverse.Create(hist).Property("SpellPrefabGUID").GetValue<string>();
                     if (string.IsNullOrEmpty(guid))
                         return true;
@@ -250,15 +225,10 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// A Mythic skin's board theme is driven by CORNER_REPLACEMENT_TYPE on the PLAYER
-        /// entity, so it survives a hero revert - which is wanted, the corner decorations are
-        /// part of the board. Of the four calls UpdateCornerReplacements fans out to per side,
-        /// only UpdateFrame is a problem: it swaps the arc above the hero portrait for the
-        /// theme's frame texture, which some themes (Maiev) render black once the skin's large
-        /// custom hero frame is gone. Skipping it leaves the board's default frame in place
-        /// while the corner props, tabletop and play area still get the theme. There is no
-        /// restore path to use instead - UpdateCornerSpellReplacements only ever applies a
-        /// theme, never reverts one.
+        /// A Mythic board theme survives the hero revert, which is wanted, but its UpdateFrame
+        /// swaps the arc above the portrait for a theme texture that some themes (Maiev) render
+        /// black once the skin's custom frame is gone. Skipping only that call keeps the default
+        /// frame; props, tabletop and play area still get the theme.
         /// </summary>
         [HarmonyPatch(typeof(CornerSpellReplacementManager), "UpdateFrame")]
         public static class BoardFramePatch
@@ -272,11 +242,9 @@ namespace HsHidePremiumSkins
                         return true;
                     if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
                         return true;
-                    // Not gated on RevertedCardIds: UpdateFrame runs during board setup, before any
-                    // hero LoadCard, so the set is always empty here. Skipping unconditionally for the
-                    // opposing side is safe because a board theme only ever accompanies a Mythic skin,
-                    // which is reverted by default; with RevertMythic off the opponent loses only the
-                    // frame texture, a cosmetic mismatch rather than a bug.
+                    // Not gated on RevertedCardIds: UpdateFrame runs before any hero LoadCard, so
+                    // the set is always empty. Unconditional for the opposing side is safe because
+                    // board themes only accompany Mythic skins.
                     if (side != Player.Side.OPPOSING)
                         return true;
                     Log?.LogInfo($"Keeping default board frame for reverted opponent (theme={spellType})");
@@ -308,8 +276,7 @@ namespace HsHidePremiumSkins
                     if (GameMgr.Get() != null && GameMgr.Get().IsBattlegrounds())
                         return;
 
-                    // Side via the controller tag: present from the first LoadCard,
-                    // before the Card object exists.
+                    // Side via the controller tag, present before the Card object exists.
                     Player friendly = GameState.Get().GetFriendlySidePlayer();
                     if (friendly == null)
                         return;
@@ -324,18 +291,16 @@ namespace HsHidePremiumSkins
                     if (GameUtils.IsVanillaHero(cardId))
                         return;
 
-                    // SAFETY GATE: only cosmetic skins live in the CardHero DBF.
-                    // Gameplay hero cards (Reno, Jaraxxus, bosses...) are not in it -> never touched.
+                    // SAFETY GATE: only cosmetic skins are in CardHero, so gameplay heroes
+                    // (Reno, Jaraxxus, bosses) never match.
                     int dbId = GameUtils.TranslateCardIdToDbId(cardId);
                     CardHeroDbfRecord heroRec =
                         GameDbf.CardHero.GetRecords().FirstOrDefault(r => r.CardId == dbId);
                     if (heroRec == null)
                     {
-                        // Gameplay hero cards played from hand are not skins and keep their identity,
-                        // but a Signature copy is still a shop cosmetic: drop it to the normal version
-                        // of the same card. Every consumer reads the premium through GetPremiumType(),
-                        // so rewriting the tag before the CardDef load is sufficient. The real-time
-                        // copy is synced too, so later CHANGE_ENTITYs see no phantom premium change.
+                        // Not a skin, so identity is kept - but a Signature copy is a shop
+                        // cosmetic: drop it to normal. Consumers read PREMIUM via GetPremiumType(),
+                        // so the tag is enough; the real-time copy is synced for later CHANGE_ENTITYs.
                         if (On(RevertSignatureHeroCards) &&
                             (TAG_PREMIUM)__instance.GetTag(GAME_TAG.PREMIUM) == TAG_PREMIUM.SIGNATURE)
                         {
@@ -344,11 +309,8 @@ namespace HsHidePremiumSkins
                             __instance.SetRealTimePremium(TAG_PREMIUM.NORMAL);
                         }
 
-                        // Skin variants outside the skin database (e.g. some meta/ascended
-                        // forms) are recognized by their reverted parent's cardId prefix.
-                        // The correct identity is whatever the entity already shows (the
-                        // vanilla hero, or a legitimately played hero card) - not a new
-                        // class-vanilla mapping.
+                        // Skin variants outside the DBF (meta/ascended forms) match their reverted
+                        // parent's prefix; the right identity is whatever the entity already shows.
                         foreach (string cid in RevertedCardIds)
                         {
                             if (cardId.StartsWith(cid, System.StringComparison.OrdinalIgnoreCase))
@@ -368,9 +330,8 @@ namespace HsHidePremiumSkins
                         return;
                     }
 
-                    // Honored (1000-win) portraits are prestige, not shop cosmetics.
-                    // They can carry tags that fool the tier filters, so classify them
-                    // by their actual HeroType and give them their own toggle.
+                    // Honored (1000-win) portraits are prestige, not shop cosmetics, and can carry
+                    // tags that fool the tier filters - classify by HeroType instead.
                     bool isHonored = heroRec.HeroType == Assets.CardHero.HeroType.HONORED;
                     if (isHonored && !On(RevertHonored) && !On(RevertAllSkins))
                     {
@@ -380,21 +341,16 @@ namespace HsHidePremiumSkins
 
                     bool isMythic = GameUtils.IsMythicHero(entityDef);
 
-                    // Diamond, by two independent routes. IsShopPremiumHeroSkin is true
-                    // only for HERO_FRAME_TYPE == 1, which the patch 36.6.0 card data puts
-                    // on all 22 Diamond skins and on nothing else but four of their own
-                    // transform variants. The quality check below is belt and braces: no
-                    // shipped Diamond skin carries HAS_DIAMOND_QUALITY today, so it never
-                    // fires on its own, but it costs nothing and would catch a future skin
-                    // that does. Mythic is excluded first - it has its own filter and would
-                    // otherwise match here through its CardDef.
+                    // Diamond: HERO_FRAME_TYPE == 1, which patch 36.6.0 puts on all 22 Diamond
+                    // skins and nothing else. The quality checks never fire today (no shipped skin
+                    // has HAS_DIAMOND_QUALITY) but would catch a future one. Mythic excluded first,
+                    // it has its own filter and would otherwise match via its CardDef.
                     bool isDiamond = !isMythic &&
                         (RewardUtils.IsShopPremiumHeroSkin(entityDef) ||
                          __instance.GetPremiumType() == TAG_PREMIUM.DIAMOND ||
                          entityDef.HasTag(GAME_TAG.HAS_DIAMOND_QUALITY));
-                    // Legendary carries no tier tag at all (bar Mecha'thun), so the CardDef
-                    // probe is the only detection. It is asked last, and only when the
-                    // filter is on, because it instantiates the card prefab synchronously.
+                    // Legendary has no tier tag, so the CardDef probe is the only detection.
+                    // Asked last and only when the filter is on - it loads a prefab synchronously.
                     bool is3DPortrait = isDiamond ||
                         (!isMythic && Revert3D() && HasLegendaryCardDef(cardId));
 
@@ -426,10 +382,8 @@ namespace HsHidePremiumSkins
                         vanillaDef.GetTag(GAME_TAG.EMOTECHARACTER));
                     __instance.SetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE,
                         vanillaDef.GetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE));
-                    // HERO_FRAME_TYPE (tag 3495) has exactly one reader in the assembly,
-                    // RewardUtils.IsShopPremiumHeroSkin; nothing in rendering consults it. Synced
-                    // anyway so any tier query against the live entity sees the vanilla hero. Safe
-                    // to write here because detection above already read it from the skin's EntityDef.
+                    // HERO_FRAME_TYPE's only reader is RewardUtils.IsShopPremiumHeroSkin; nothing
+                    // in rendering consults it. Synced so tier queries see the vanilla hero.
                     __instance.SetTag(GAME_TAG.HERO_FRAME_TYPE,
                         vanillaDef.GetTag(GAME_TAG.HERO_FRAME_TYPE));
                     // Skins can override individual emotes; sync the whole block.
@@ -438,16 +392,13 @@ namespace HsHidePremiumSkins
                     // Diamond-quality marker feeds actor variant selection and tooltips.
                     __instance.SetTag(GAME_TAG.HAS_DIAMOND_QUALITY,
                         vanillaDef.GetTag(GAME_TAG.HAS_DIAMOND_QUALITY));
-                    // Premium resolution is left to the game: GetPremiumType() treats the PREMIUM tag
-                    // as an entitlement ceiling and walks it down to what the card can actually render
-                    // (DIAMOND -> SIGNATURE -> GOLDEN, each step gated on the matching quality tag).
-                    // Syncing the two quality tags to the vanilla hero is therefore enough; writing
-                    // PREMIUM here would destroy the ceiling the cascade reads.
+                    // Premium is left to the game: GetPremiumType() treats PREMIUM as a ceiling and
+                    // walks it down per quality tag (DIAMOND -> SIGNATURE -> GOLDEN). Syncing the
+                    // quality tags is enough; writing PREMIUM would destroy that ceiling.
                     __instance.SetTag(GAME_TAG.HAS_SIGNATURE_QUALITY,
                         vanillaDef.GetTag(GAME_TAG.HAS_SIGNATURE_QUALITY));
 
-                    // After a transform-variant revert, tooltips would still read the
-                    // live entity's transformed-from marker and reference the skin.
+                    // Otherwise tooltips still reference the skin through this marker.
                     __instance.SetTag(GAME_TAG.TRANSFORMED_FROM_CARD, 0);
 
                     RevertedCardIds.Add(cardId);
