@@ -373,9 +373,11 @@ namespace HsHidePremiumSkins
                         entityDef.HasTag(GAME_TAG.HAS_DIAMOND_QUALITY);
                     // Legendary: the CardDef probe is the real detection, and runs only
                     // when the cheap tag checks came up empty and the answer would matter.
-                    // NOTE: isPremiumTier here means HERO_FRAME_TYPE == 1 (Diamond), so a
-                    // Diamond skin lacking HAS_DIAMOND_QUALITY lands in this branch and
-                    // needs RevertLegendary rather than RevertDiamond to be caught.
+                    // NOTE: isPremiumTier means HERO_FRAME_TYPE == 1, which the patch
+                    // 36.6.0 card data carries on all 22 Diamond skins and nothing else.
+                    // None of them carry HAS_DIAMOND_QUALITY, so isDiamond above is always
+                    // false and every Diamond skin is actually caught HERE, gated on
+                    // RevertLegendary. RevertDiamond currently matches nothing.
                     bool isLegendary = !isMythic && !isDiamond &&
                         (isPremiumTier || (On(RevertLegendary) && HasLegendaryCardDef(cardId)));
 
