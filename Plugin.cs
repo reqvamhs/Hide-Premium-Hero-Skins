@@ -71,9 +71,9 @@ namespace HsHidePremiumSkins
     /// <summary>
     /// Reverts opponent hero skins to the default class hero by rewriting the cardId in an
     /// Entity.LoadCard prefix. Tier detection uses the game's own classifiers: Mythic via
-    /// CORNER_REPLACEMENT_TYPE, Diamond via premium quality or HERO_FRAME_TYPE, Legendary
-    /// via the CardDef's legendary 3D model or custom frame, Pixel via a configurable id
-    /// list. Only cardIds present in the CardHero DBF are treated as skins, so gameplay
+    /// CORNER_REPLACEMENT_TYPE, Diamond via premium quality or the HERO_FRAME_TYPE marker,
+    /// Legendary via the CardDef's legendary 3D model or custom frame, Pixel via a
+    /// configurable id list. Only cardIds present in the CardHero DBF are treated as skins, so gameplay
     /// hero cards (Reno, Jaraxxus, bosses) are never touched, and Honored portraits are
     /// kept unless opted in. Hero powers are left alone.
     /// </summary>
@@ -119,9 +119,11 @@ namespace HsHidePremiumSkins
         }
 
         /// <summary>
-        /// Legendary-tier detection. HERO_FRAME_TYPE marks Diamond and Mythic, not Legendary:
-        /// it is set on exactly one Legendary skin (Mecha'thun), and every skin has RARITY
-        /// FREE, so no tag distinguishes the tier. The CardDef asset does - Legendary skins
+        /// Legendary-tier detection. HERO_FRAME_TYPE does not mark the tier: the game's own
+        /// reader, RewardUtils.IsShopPremiumHeroSkin, is true only for tag value 1 (Diamond),
+        /// and every skin has RARITY FREE, so no tag distinguishes Legendary. Nor does
+        /// CardHero.HeroType, whose only values are UNKNOWN, VANILLA, HONORED and the two
+        /// Battlegrounds kinds. The CardDef asset does - Legendary skins
         /// carry a legendary 3D model or a custom hero frame prefab, while vanilla, Honored
         /// and ordinary 2D skins carry neither. GetCardDef instantiates the shared prefab
         /// synchronously, so this is asked only as a last resort after the tag checks fail,
@@ -361,17 +363,19 @@ namespace HsHidePremiumSkins
                         return;
                     }
 
-                    // HERO_FRAME_TYPE marks the Diamond and Mythic tiers (plus Mecha'thun);
-                    // IsShopPremiumHeroSkin is the game's own check for it. It is NOT a
+                    // IsShopPremiumHeroSkin is true only when HERO_FRAME_TYPE == 1, i.e.
+                    // Diamond; Mythic (2) and Mecha'thun (3) read false. It is NOT a
                     // Legendary marker - see HasLegendaryCardDef.
                     bool isPremiumTier = RewardUtils.IsShopPremiumHeroSkin(entityDef);
                     bool isMythic = GameUtils.IsMythicHero(entityDef);
                     bool isDiamond =
                         __instance.GetPremiumType() == TAG_PREMIUM.DIAMOND ||
                         entityDef.HasTag(GAME_TAG.HAS_DIAMOND_QUALITY);
-                    // Legendary: the marker path only ever catches Mecha'thun; the CardDef
-                    // probe is the real detection and runs only when the cheap tag checks
-                    // came up empty and the answer would matter.
+                    // Legendary: the CardDef probe is the real detection, and runs only
+                    // when the cheap tag checks came up empty and the answer would matter.
+                    // NOTE: isPremiumTier here means HERO_FRAME_TYPE == 1 (Diamond), so a
+                    // Diamond skin lacking HAS_DIAMOND_QUALITY lands in this branch and
+                    // needs RevertLegendary rather than RevertDiamond to be caught.
                     bool isLegendary = !isMythic && !isDiamond &&
                         (isPremiumTier || (On(RevertLegendary) && HasLegendaryCardDef(cardId)));
 
@@ -404,7 +408,7 @@ namespace HsHidePremiumSkins
                         vanillaDef.GetTag(GAME_TAG.EMOTECHARACTER));
                     __instance.SetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE,
                         vanillaDef.GetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE));
-                    // HERO_FRAME_TYPE is a shop/tier marker whose only reader is
+                    // HERO_FRAME_TYPE (tag 3495) has exactly one reader in the assembly,
                     // RewardUtils.IsShopPremiumHeroSkin; nothing in rendering consults it. Synced
                     // anyway so any tier query against the live entity sees the vanilla hero. Safe
                     // to write here because detection above already read it from the skin's EntityDef.
