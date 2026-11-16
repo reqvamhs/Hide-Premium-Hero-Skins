@@ -12,7 +12,7 @@ namespace HsHidePremiumSkins
     {
         public const string PluginGuid = "com.reqvam.hshidepremiumskins";
         public const string PluginName = "Hide Premium Hero Skins";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.3.0";
 
         private void Awake()
         {
@@ -340,9 +340,10 @@ namespace HsHidePremiumSkins
                     if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
                         return true;
                     // Not gated on RevertedCardIds: UpdateFrame runs before any hero LoadCard, so
-                    // the set is always empty. Unconditional for the opposing side is safe because
-                    // board themes only accompany Mythic skins.
-                    if (side != Player.Side.OPPOSING)
+                    // the set is always empty. Safe for the opposing side because their own themes
+                    // only accompany Mythic skins. Destroyed corners are the exception: your own
+                    // skin puts those on their side, so let them through.
+                    if (side != Player.Side.OPPOSING || IsDestroyedCorners(spellType))
                         return true;
                     Log?.LogInfo($"Keeping default board frame for reverted opponent (theme={spellType})");
                     return false;

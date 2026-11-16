@@ -2,7 +2,7 @@
 
 A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin for Hearthstone that shows opponent **Diamond, Legendary, and Mythic hero skins** (and optionally Pixel skins) as the default class portraits during games.
 
-Fancy 3D portraits, animated frames, and low-health metamorphosis showcases can be a lot of visual noise. With this mod, an opponent playing Mythic Tess or Diamond Jaina just looks like plain Valeera or Jaina on your screen — including the mulligan, history tiles, and end-of-game screen. Skin transform effects (some skins morph at low health) are reverted the same way, with the transform showcase animation suppressed.
+Fancy 3D portraits, animated frames, and low-health metamorphosis showcases can be a lot of visual noise. With this mod, an opponent playing Mythic Tess or Diamond Jaina just looks like plain Valeera or Jaina on your screen — including the mulligan, history tiles, and end-of-game screen. Skin transforms (Y'Shaarj, Genn Greymane and others) are reverted the same way: no transform ceremony, and the board stays exactly as it started, on both sides.
 
 Earned prestige is deliberately respected: **Honored (1000-win) portraits are kept** by default, and a **500-win golden hero** still shows as the golden default portrait next to its golden hero power — only shop cosmetics are stripped, not achievements. Battlegrounds is exempt (hero identity is gameplay information there), and collection previews are never touched, so browsing your own skins works normally.
 
@@ -14,7 +14,7 @@ Purely cosmetic and strictly local — only what *your* client renders changes. 
 
 Every hero visual in a match loads through `Entity.LoadCard(cardId)`. This plugin installs a [Harmony](https://github.com/BepInEx/HarmonyX) prefix that rewrites the cardId to the class's default hero before the load, using the game's **own classifiers** for tier detection: a board theme (`CORNER_REPLACEMENT_TYPE`) distinguishes Mythic, and premium quality or the `HERO_FRAME_TYPE` marker (`RewardUtils.IsShopPremiumHeroSkin`) marks Diamond. That marker sits on every Diamond skin and on only one Legendary skin (Mecha'thun), so Legendary is detected from the skin's CardDef instead: a legendary 3D model or custom frame prefab means Legendary. Diamond and Legendary share a single filter, because nothing in a match distinguishes them: both ship a 3D model and a custom frame, and the one tag that separates them only drives menu scaling. Legendary buys more unique animations, not a different kind of skin. Pixel skins are matched by name plus a configurable cardId/dbfId list.
 
-A safety gate keeps gameplay intact: only cardIds present in the game's cosmetic-skin database (`CardHero`) are ever treated as skins, so gameplay hero cards — Reno, Lord Jaraxxus, adventure bosses — are never replaced. The one thing done to a played hero card is cosmetic: a **Signature** copy (e.g. Signature Deathwing) has its `PREMIUM` tag dropped to normal before load, so it renders as the plain version of the same hero card. On revert, skin behavior tags (emotes, attack animation, corner decorations, diamond markers) are re-synced with the default hero, and a small companion patch cleans up custom hero frames the game would otherwise leave mounted. Skin transform variants arrive as a second `LoadCard` with their own cardId and are reverted identically, with the transform showcase tags zeroed so the change renders as visual-less.
+A safety gate keeps gameplay intact: only cardIds present in the game's cosmetic-skin database (`CardHero`) are ever treated as skins, so gameplay hero cards — Reno, Lord Jaraxxus, adventure bosses — are never replaced. The one thing done to a played hero card is cosmetic: a **Signature** copy (e.g. Signature Deathwing) has its `PREMIUM` tag dropped to normal before load, so it renders as the plain version of the same hero card. On revert, skin behavior tags (emotes, attack animation, corner decorations, diamond markers) are re-synced with the default hero, and a small companion patch cleans up custom hero frames the game would otherwise leave mounted. Skin transform variants arrive as a second `LoadCard` with their own cardId and are reverted identically, including the tag re-sync, so the hero keeps its normal attack. Their ceremony sub-spells are suppressed for the reverted side only, and the board theme is held: no mid-game theme switch, and no destroyed-corners theme pushed onto your side.
 
 ## Installation
 
@@ -48,6 +48,14 @@ HideOpponentSkins = true
 
 ## Also revert your own hero skin.
 AlsoHideOwnSkin = false
+
+## When a skin is reverted, keep the board as it started the game: no theme switch when
+## the skin transforms, and no destroyed corners on the other side (Y'Shaarj, Deathwing).
+FreezeBoardTheme = true
+
+## Keep the board's default frame above a reverted opponent's portrait instead of the
+## skin theme's frame texture, which some themes render black.
+KeepDefaultBoardFrame = true
 
 [Filters]
 ## Revert Mythic-tier skins (fully animated 3D portraits).
@@ -94,8 +102,8 @@ No game files are included in this repository; the project compiles against `Ass
 
 ## Compatibility
 
-- Built and verified against the July 2026 Hearthstone build.
-- Hearthstone patches can rename or change the hooked methods (`Entity.LoadCard`, `Actor.LoadCustomFrame`). If the mod stops working after a game update, check `LogOutput.log` for Harmony errors and watch this repo for an updated release.
+- Built and verified against the November 2026 Hearthstone build.
+- Hearthstone patches can rename or change the hooked methods (`Entity.LoadCard`, `SubSpellController.GetSubSpellInstanceForTasklist`, `CornerSpellReplacementManager`). If the mod stops working after a game update, check `LogOutput.log` for Harmony errors and watch this repo for an updated release.
 - Coexists with other BepInEx/Firestone mods, including the author's other Hearthstone mods.
 
 ## Uninstall
