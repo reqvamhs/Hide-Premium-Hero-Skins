@@ -60,6 +60,9 @@ namespace HsHidePremiumSkins
                 "Comma-separated cardIds (HERO_02ba) or dbfIds (116081) always treated as Pixel skins. " +
                 "Defaults: Northrend Arthas, Eternal Malfurion, Hearthglen Jaina, Orgrimmar Thrall.");
 
+            SkinPatches.FreezeBoardTheme = fsConfig.Bind("Features", "FreezeBoardTheme", true,
+                "When a skin is reverted, keep the board as it started the game: no theme switch when " +
+                "the skin transforms, and no destroyed corners on the other side (Y'Shaarj, Deathwing).");
             SkinPatches.KeepDefaultBoardFrame = fsConfig.Bind("Features", "KeepDefaultBoardFrame", true,
                 "When an opponent skin is reverted, keep the board's default frame above their portrait " +
                 "instead of the skin theme's frame texture, which some themes (e.g. Maiev) render black " +
@@ -96,6 +99,7 @@ namespace HsHidePremiumSkins
         internal static ConfigEntry<bool> RevertSignatureHeroCards;
         internal static ConfigEntry<string> PixelSkinCardIds;
         internal static ConfigEntry<bool> KeepDefaultBoardFrame;
+        internal static ConfigEntry<bool> FreezeBoardTheme;
 
 
         internal static bool On(ConfigEntry<bool> e) => e != null && e.Value;
@@ -111,6 +115,11 @@ namespace HsHidePremiumSkins
             new System.Collections.Generic.HashSet<string>();
         private static object _lastGameState;
 
+        // Per game: whether each side's hero was reverted, and the board theme each side
+        // started with (see FreezeBoardThemePatch).
+        internal static bool FriendlyReverted, OpposingReverted;
+        internal static CornerReplacementSpellType FirstThemeFriendly, FirstThemeOpposing;
+
         internal static void TrackGame()
         {
             GameState gs = GameState.Get();
@@ -118,6 +127,8 @@ namespace HsHidePremiumSkins
             {
                 _lastGameState = gs;
                 RevertedCardIds.Clear();
+                FriendlyReverted = OpposingReverted = false;
+                FirstThemeFriendly = FirstThemeOpposing = CornerReplacementSpellType.NONE;
             }
         }
 
@@ -171,6 +182,18 @@ namespace HsHidePremiumSkins
             return false;
         }
 
+        // Skin effect prefabs are named after the skin: older ones "HERO_01az_...", newer ones
+        // "HEROFX_02cd_..." (Y'Shaarj's transform and corner destruction). The trailing
+        // underscore keeps a shorter cardId from matching a longer one.
+        internal static bool IsSkinSpell(string guid, string cardId)
+        {
+            const System.StringComparison ic = System.StringComparison.OrdinalIgnoreCase;
+            if (guid.StartsWith(cardId + "_", ic))
+                return true;
+            return cardId.StartsWith("HERO_", ic) &&
+                   guid.StartsWith("HEROFX_" + cardId.Substring(5) + "_", ic);
+        }
+
         /// <summary>
         /// Suppresses skin transform ceremonies, whose SpellPrefabGUID starts with the skin's
         /// cardId. Returning no instance is a path the game already takes (AddPowerSourceAndTargets
@@ -205,10 +228,21 @@ namespace HsHidePremiumSkins
                     string guid = Traverse.Create(hist).Property("SpellPrefabGUID").GetValue<string>();
                     if (string.IsNullOrEmpty(guid))
                         return true;
+                    // Only for the side whose skin was reverted, so a mirror match still plays
+                    // your own ceremony. Unknown source: fall back to the unsided match.
+                    int sourceId = Traverse.Create(hist).Property("SourceEntityID").GetValue<int>();
+                    Entity source = GameState.Get()?.GetEntity(sourceId);
+                    Player friendly = GameState.Get()?.GetFriendlySidePlayer();
+                    if (source != null && friendly != null)
+                    {
+                        bool own = source.GetControllerId() == friendly.GetPlayerId();
+                        if (!(own ? FriendlyReverted : OpposingReverted))
+                            return true;
+                    }
 
                     foreach (string cid in RevertedCardIds)
                     {
-                        if (guid.StartsWith(cid + "_", System.StringComparison.OrdinalIgnoreCase))
+                        if (IsSkinSpell(guid, cid))
                         {
                             Log?.LogInfo($"Suppressing skin sub-spell '{guid}'");
                             return false;
@@ -222,6 +256,69 @@ namespace HsHidePremiumSkins
                 }
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Some skins change the board mid-game when they transform: their own side switches
+        /// theme (Y'Shaarj 19 -> 20) and the other side is set to a destroyed-corners theme.
+        /// While a side is reverted, hold both: its own theme stays at the first one recorded,
+        /// and the other side keeps its theme. The first theme is applied during board setup,
+        /// before any hero LoadCard, so it is recorded unconditionally.
+        /// </summary>
+        [HarmonyPatch(typeof(CornerSpellReplacementManager), "UpdateCornerSpellReplacements")]
+        public static class FreezeBoardThemePatch
+        {
+            [HarmonyPrefix]
+            public static void Prefix(
+                ref CornerReplacementContext cornerReplacementContextFriendly,
+                ref CornerReplacementContext cornerReplacementContextOpposing)
+            {
+                try
+                {
+                    if (!On(Enabled) || !On(FreezeBoardTheme))
+                        return;
+                    if (SceneMgr.Get() == null || SceneMgr.Get().GetMode() != SceneMgr.Mode.GAMEPLAY)
+                        return;
+                    TrackGame();
+                    Hold(ref cornerReplacementContextFriendly.cornerReplacementSpellType,
+                        ref FirstThemeFriendly, FriendlyReverted, OpposingReverted, "own");
+                    Hold(ref cornerReplacementContextOpposing.cornerReplacementSpellType,
+                        ref FirstThemeOpposing, OpposingReverted, FriendlyReverted, "opponent");
+                }
+                catch (System.Exception e)
+                {
+                    Log?.LogError($"FreezeBoardTheme prefix failed: {e}");
+                }
+            }
+
+            private static void Hold(ref CornerReplacementSpellType incoming,
+                ref CornerReplacementSpellType first, bool reverted, bool otherReverted, string side)
+            {
+                if (otherReverted && IsDestroyedCorners(incoming))
+                {
+                    Log?.LogInfo($"Keeping {side} board theme {first} (reverted skin asked for {incoming})");
+                    incoming = first;
+                    return;
+                }
+                if (first == CornerReplacementSpellType.NONE)
+                {
+                    first = incoming;
+                    return;
+                }
+                if (reverted && incoming != first)
+                {
+                    Log?.LogInfo($"Holding {side} board theme {first} (skin asked for {incoming})");
+                    incoming = first;
+                }
+            }
+        }
+
+        // DETROYED_CORNERS_DEATHWING / _YSHAARJ (Blizzard's spelling); the corrected spelling
+        // is accepted too in case it is ever fixed.
+        internal static bool IsDestroyedCorners(CornerReplacementSpellType t)
+        {
+            string n = t.ToString();
+            return n.StartsWith("DETROYED_CORNERS") || n.StartsWith("DESTROYED_CORNERS");
         }
 
         /// <summary>
@@ -256,6 +353,36 @@ namespace HsHidePremiumSkins
                 }
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Re-syncs skin behaviour tags with the hero actually being loaded. Needed on every
+        /// revert, including transform variants: the server re-sends the skin's tags with each
+        /// CHANGE_ENTITY, before LoadCard. A stale HERO_DOESNT_MOVE_ON_ATTACK makes the vanilla
+        /// hero attack in place with the generic spell, which renders as no attack at all.
+        /// </summary>
+        internal static void SyncSkinTags(Entity e, EntityDef def)
+        {
+            e.SetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK, def.GetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK));
+            e.SetTag(GAME_TAG.EMOTECHARACTER, def.GetTag(GAME_TAG.EMOTECHARACTER));
+            e.SetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE, def.GetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE));
+            // Only read by RewardUtils.IsShopPremiumHeroSkin; synced so tier queries see the hero.
+            e.SetTag(GAME_TAG.HERO_FRAME_TYPE, def.GetTag(GAME_TAG.HERO_FRAME_TYPE));
+            for (int t = (int)GAME_TAG.OVERRIDE_EMOTE_0; t <= (int)GAME_TAG.OVERRIDE_EMOTE_5; t++)
+                e.SetTag((GAME_TAG)t, def.GetTag((GAME_TAG)t));
+            // Premium is left to the game: GetPremiumType() treats PREMIUM as a ceiling and walks
+            // it down per quality tag. Syncing the quality tags is enough; writing PREMIUM would
+            // destroy that ceiling.
+            e.SetTag(GAME_TAG.HAS_DIAMOND_QUALITY, def.GetTag(GAME_TAG.HAS_DIAMOND_QUALITY));
+            e.SetTag(GAME_TAG.HAS_SIGNATURE_QUALITY, def.GetTag(GAME_TAG.HAS_SIGNATURE_QUALITY));
+            // Otherwise tooltips still reference the skin through this marker.
+            e.SetTag(GAME_TAG.TRANSFORMED_FROM_CARD, 0);
+        }
+
+        internal static void MarkReverted(bool isOwn)
+        {
+            if (isOwn) FriendlyReverted = true;
+            else OpposingReverted = true;
         }
 
         [HarmonyPatch(typeof(Entity), nameof(Entity.LoadCard))]
@@ -307,6 +434,10 @@ namespace HsHidePremiumSkins
                             Log?.LogInfo($"Reverting signature hero card {cardId} ({entityDef.GetName()}) -> normal");
                             __instance.SetTag(GAME_TAG.PREMIUM, (int)TAG_PREMIUM.NORMAL);
                             __instance.SetRealTimePremium(TAG_PREMIUM.NORMAL);
+                            // A Signature-only static attack would play the normal actor's generic
+                            // spell in place - invisible. Match the card's own value instead.
+                            __instance.SetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK,
+                                entityDef.GetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK));
                         }
 
                         // Skin variants outside the DBF (meta/ascended forms) match their reverted
@@ -320,8 +451,13 @@ namespace HsHidePremiumSkins
                                     !current.StartsWith(cid, System.StringComparison.OrdinalIgnoreCase))
                                 {
                                     Log?.LogInfo($"Reverting skin variant {cardId} -> {current}");
+                                    EntityDef currentDef = DefLoader.Get()?.GetEntityDef(current);
+                                    if (currentDef != null)
+                                        SyncSkinTags(__instance, currentDef);
+                                    else
+                                        __instance.SetTag(GAME_TAG.TRANSFORMED_FROM_CARD, 0);
+                                    MarkReverted(isOwn);
                                     RevertedCardIds.Add(cardId);
-                                    __instance.SetTag(GAME_TAG.TRANSFORMED_FROM_CARD, 0);
                                     cardId = current;
                                 }
                                 return;
@@ -375,32 +511,8 @@ namespace HsHidePremiumSkins
                     if (vanillaDef == null)
                         return;
 
-                    // Re-sync skin behavior tags with the default hero.
-                    __instance.SetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK,
-                        vanillaDef.GetTag(GAME_TAG.HERO_DOESNT_MOVE_ON_ATTACK));
-                    __instance.SetTag(GAME_TAG.EMOTECHARACTER,
-                        vanillaDef.GetTag(GAME_TAG.EMOTECHARACTER));
-                    __instance.SetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE,
-                        vanillaDef.GetTag(GAME_TAG.CORNER_REPLACEMENT_TYPE));
-                    // HERO_FRAME_TYPE's only reader is RewardUtils.IsShopPremiumHeroSkin; nothing
-                    // in rendering consults it. Synced so tier queries see the vanilla hero.
-                    __instance.SetTag(GAME_TAG.HERO_FRAME_TYPE,
-                        vanillaDef.GetTag(GAME_TAG.HERO_FRAME_TYPE));
-                    // Skins can override individual emotes; sync the whole block.
-                    for (int t = (int)GAME_TAG.OVERRIDE_EMOTE_0; t <= (int)GAME_TAG.OVERRIDE_EMOTE_5; t++)
-                        __instance.SetTag((GAME_TAG)t, vanillaDef.GetTag((GAME_TAG)t));
-                    // Diamond-quality marker feeds actor variant selection and tooltips.
-                    __instance.SetTag(GAME_TAG.HAS_DIAMOND_QUALITY,
-                        vanillaDef.GetTag(GAME_TAG.HAS_DIAMOND_QUALITY));
-                    // Premium is left to the game: GetPremiumType() treats PREMIUM as a ceiling and
-                    // walks it down per quality tag (DIAMOND -> SIGNATURE -> GOLDEN). Syncing the
-                    // quality tags is enough; writing PREMIUM would destroy that ceiling.
-                    __instance.SetTag(GAME_TAG.HAS_SIGNATURE_QUALITY,
-                        vanillaDef.GetTag(GAME_TAG.HAS_SIGNATURE_QUALITY));
-
-                    // Otherwise tooltips still reference the skin through this marker.
-                    __instance.SetTag(GAME_TAG.TRANSFORMED_FROM_CARD, 0);
-
+                    SyncSkinTags(__instance, vanillaDef);
+                    MarkReverted(isOwn);
                     RevertedCardIds.Add(cardId);
                     Log?.LogInfo($"Reverting hero skin {cardId} -> {vanillaCardId}");
                     cardId = vanillaCardId;
